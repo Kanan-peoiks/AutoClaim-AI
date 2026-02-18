@@ -8,9 +8,6 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/claim")
 public class ClaimController {
 
-    @GetMapping("/test")
-    public String test(){
-        return "Claim test";
-    }
+
 }
 
