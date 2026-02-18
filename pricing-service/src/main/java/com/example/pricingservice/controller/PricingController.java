@@ -8,8 +8,5 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/pricing")
 public class PricingController {
 
-    @GetMapping("/test")
-    public String test(){
-        return "Pricing test";
-    }
+
 }
