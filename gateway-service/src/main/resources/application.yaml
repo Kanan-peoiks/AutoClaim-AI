@@ -1,0 +1,25 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: gateway-service
+
+  cloud:
+    gateway:
+      routes:
+
+        - id: auth-service
+          uri: http://localhost:8081
+          predicates:
+            - Path=/api/auth/**
+
+        - id: claim-service
+          uri: http://localhost:8083
+          predicates:
+            - Path=/api/claim/**
+
+        - id: pricing-service
+          uri: http://localhost:8082
+          predicates:
+            - Path=/api/pricing/**
