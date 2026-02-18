@@ -15,11 +15,11 @@ spring:
             - Path=/api/auth/**
 
         - id: claim-service
-          uri: http://localhost:8083
+          uri: http://localhost:8085
           predicates:
             - Path=/api/claim/**
 
         - id: pricing-service
-          uri: http://localhost:8082
+          uri: http://localhost:8083
           predicates:
             - Path=/api/pricing/**
