@@ -19,3 +19,7 @@ spring:
       hibernate:
         format_sql: true
     database-platform: org.hibernate.dialect.PostgreSQLDialect
+
+jwt:
+    secret: mySuperSecretKeyForJwtTokenThatIsAtLeast32CharsLong!!
+    expiration-ms: 86400000
