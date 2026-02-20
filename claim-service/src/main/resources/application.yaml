@@ -4,5 +4,25 @@ server:
 spring:
   application:
     name: claim-service
-  mongodb:
-    uri: mongodb://localhost:27017/claim_db
+  datasource:
+    url: jdbc:postgresql://localhost:5432/claim_db
+    username: postgres
+    password: p1234
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+
+gemini:
+  api:
+    key: "AIzaSyCFLUX9wKS8wceSWwY5upPHZruW2zvYHPU"
+    url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+
+pricing:
+  service:
+    url: http://localhost:8083
