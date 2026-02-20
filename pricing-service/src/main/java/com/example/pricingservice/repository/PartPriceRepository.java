@@ -8,6 +8,6 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import java.util.Optional;
 import java.util.OptionalInt;
 
-public interface PartPriceRepository extends JpaRepository<PartPrice, Integer> {
+public interface PartPriceRepository extends JpaRepository<PartPrice, Long> {
     Optional<PartPrice> findByPartName(String partName);
 }
