@@ -14,6 +14,7 @@ public class GatewayController {
 
     private final Map<String, Integer> userCounter = new HashMap<>();
 
+
     @GetMapping("/forward")
     public String forwardRequest(@RequestParam String username) {
         userCounter.putIfAbsent(username, 0);
@@ -23,6 +24,7 @@ public class GatewayController {
         userCounter.put(username, userCounter.get(username) + 1);
         // forward to claim service ?
         return "Success";
-
     }
+
+
 }
