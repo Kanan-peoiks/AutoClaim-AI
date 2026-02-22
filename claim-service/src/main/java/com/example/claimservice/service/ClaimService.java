@@ -6,6 +6,7 @@ import com.example.claimservice.repository.ClaimRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
@@ -13,9 +14,11 @@ import org.springframework.web.reactive.function.client.WebClient;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class ClaimService {
@@ -37,8 +40,8 @@ public class ClaimService {
         try {
             geminiResponseJson = callGemini(photoUrl);
         } catch (Exception e) {
-            // Xəta olarsa boş JSON qaytarırıq ki, sistem çökməsin
-            geminiResponseJson = "{\"error\": \"Gemini call failed\"}";
+            log.warn("Gemini call failed for photoUrl={}: {}", photoUrl, e.getMessage());
+            geminiResponseJson = "{\"error\": \"Gemini call failed: " + e.getMessage().replace("\"", "'") + "\"}";
         }
 
         // 2. Gemini-dən gələn mətndən zədəli detalları ayırırıq
@@ -75,14 +78,37 @@ public class ClaimService {
     }
 
     private String callGemini(String photoUrl) {
-        // Gemini-yə göndərilən sorğu strukturu
+        // 1. Fetch image from URL and encode as base64 (Gemini requires inline image data, not URL)
+        byte[] imageBytes;
+        try {
+            imageBytes = webClient.get()
+                    .uri(photoUrl)
+                    .retrieve()
+                    .bodyToMono(byte[].class)
+                    .block();
+        } catch (Exception e) {
+            log.warn("Failed to fetch image from URL, falling back to text-only prompt: {}", e.getMessage());
+            // Fallback: ask Gemini with URL in text (may not analyze image but avoids hard failure)
+            return callGeminiTextOnly(photoUrl);
+        }
+        if (imageBytes == null || imageBytes.length == 0) {
+            return callGeminiTextOnly(photoUrl);
+        }
+        String base64Image = Base64.getEncoder().encodeToString(imageBytes);
+        String mimeType = inferMimeType(photoUrl);
+
+        // 2. Build request with inlineData (Gemini API format)
+        List<Map<String, Object>> parts = List.of(
+                Map.of(
+                        "inlineData", Map.of(
+                                "mimeType", mimeType,
+                                "data", base64Image
+                        )
+                ),
+                Map.of("text", "Identify damaged car parts in this image. List only the part names, one per line (e.g. Hood, Front Bumper, Fender). Use common English names.")
+        );
         Map<String, Object> requestBody = Map.of(
-                "contents", List.of(
-                        Map.of("parts", List.of(
-                                Map.of("text", "Identify damaged car parts in this image URL: " + photoUrl +
-                                        ". Provide the names of parts separated by new lines only.")
-                        ))
-                )
+                "contents", List.of(Map.of("parts", parts))
         );
 
         return webClient.post()
@@ -94,29 +120,63 @@ public class ClaimService {
                 .block();
     }
 
+    private String callGeminiTextOnly(String photoUrl) {
+        Map<String, Object> requestBody = Map.of(
+                "contents", List.of(
+                        Map.of("parts", List.of(
+                                Map.of("text", "Based on this image URL, list possible damaged car parts (one per line): " + photoUrl + ". Use names like: Hood, Front Bumper, Fender, Door.")
+                        ))
+                )
+        );
+        return webClient.post()
+                .uri(geminiApiUrl + "?key=" + geminiApiKey)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(requestBody)
+                .retrieve()
+                .bodyToMono(String.class)
+                .block();
+    }
+
+    private static String inferMimeType(String url) {
+        if (url == null) return "image/jpeg";
+        String lower = url.toLowerCase();
+        if (lower.contains(".png")) return "image/png";
+        if (lower.contains(".webp")) return "image/webp";
+        if (lower.contains(".gif")) return "image/gif";
+        return "image/jpeg";
+    }
+
     private List<String> extractDamagedParts(String geminiJson) {
         List<String> parts = new ArrayList<>();
         try {
             JsonNode root = objectMapper.readTree(geminiJson);
-            // Gemini-nin rəsmi cavab yolu: candidates[0] -> content -> parts[0] -> text
-            JsonNode textNode = root.path("candidates").get(0)
-                    .path("content").path("parts").get(0).path("text");
-
-            if (textNode != null && !textNode.isMissingNode()) {
-                String text = textNode.asText();
-                // Mətni sətirlərə bölürük və hər sətirdəki detal adını təmizləyirik
-                String[] lines = text.split("\\n");
-                for (String line : lines) {
-                    // Yalnız hərfləri və boşluqları saxlayırıq (məs: "Front Bumper")
-                    String clean = line.replaceAll("[^a-zA-Z ]", "").trim();
-                    if (!clean.isEmpty()) {
-                        parts.add(clean);
-                    }
+            if (root.has("error")) {
+                log.debug("Gemini returned error: {}", root.path("error").asText());
+                return parts;
+            }
+            JsonNode candidates = root.path("candidates");
+            if (!candidates.isArray() || candidates.isEmpty()) {
+                return parts;
+            }
+            JsonNode content = candidates.get(0).path("content");
+            JsonNode partsNode = content.path("parts");
+            if (!partsNode.isArray() || partsNode.isEmpty()) {
+                return parts;
+            }
+            JsonNode textNode = partsNode.get(0).path("text");
+            if (textNode.isMissingNode() || !textNode.isTextual()) {
+                return parts;
+            }
+            String text = textNode.asText();
+            String[] lines = text.split("\\n");
+            for (String line : lines) {
+                String clean = line.replaceAll("[^a-zA-Z ]", "").trim();
+                if (!clean.isEmpty()) {
+                    parts.add(clean);
                 }
             }
         } catch (Exception e) {
-            // Parsing xətası olarsa boş siyahı qaytarırıq
-            System.err.println("JSON Parsing error: " + e.getMessage());
+            log.warn("JSON parsing error extracting damaged parts: {}", e.getMessage());
         }
         return parts;
     }
