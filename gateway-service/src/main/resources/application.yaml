@@ -26,3 +26,4 @@ spring:
 
 jwt:
   secret: mySuperSecretKeyForJwtTokenThatIsAtLeast32CharsLong!!
+  expiration-ms: 86400000
