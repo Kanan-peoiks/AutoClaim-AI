@@ -3,13 +3,14 @@ package com.example.claimservice.service;
 import com.example.claimservice.client.PricingClient;
 import com.example.claimservice.entity.Claim;
 import com.example.claimservice.repository.ClaimRepository;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
