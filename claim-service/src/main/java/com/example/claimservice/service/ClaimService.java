@@ -11,7 +11,9 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.util.UriComponentsBuilder;
 
+import java.net.URI;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -77,19 +79,31 @@ public class ClaimService {
         return repo.findAll();
     }
 
+    private URI buildGeminiUri() {
+        return UriComponentsBuilder.fromUriString(geminiApiUrl)
+                .queryParam("key", geminiApiKey)
+                .build()
+                .toUri();
+    }
+
+    private static final String GEMINI_PROMPT = "Analyze this car damage. Return ONLY a comma-separated list of damaged parts found in this list: [Headlight, Bumper, Hood, Door, Fender]. If no damage, return 'None'.";
+
     private String callGemini(String photoUrl) {
-        // 1. Fetch image from URL and encode as base64 (Gemini requires inline image data, not URL)
-        byte[] imageBytes;
+        // 1. Fetch image from URL (follow redirects; 404/5xx fall back to text-only)
+        byte[] imageBytes = null;
         try {
             imageBytes = webClient.get()
                     .uri(photoUrl)
+                    .header("User-Agent", "AutoClaim-AI/1.0 (Spring WebClient)")
                     .retrieve()
+                    .onStatus(org.springframework.http.HttpStatusCode::isError, resp -> {
+                        log.warn("Image fetch failed: {} for URL: {}", resp.statusCode(), photoUrl);
+                        return resp.createException();
+                    })
                     .bodyToMono(byte[].class)
                     .block();
         } catch (Exception e) {
             log.warn("Failed to fetch image from URL, falling back to text-only prompt: {}", e.getMessage());
-            // Fallback: ask Gemini with URL in text (may not analyze image but avoids hard failure)
-            return callGeminiTextOnly(photoUrl);
         }
         if (imageBytes == null || imageBytes.length == 0) {
             return callGeminiTextOnly(photoUrl);
@@ -105,14 +119,14 @@ public class ClaimService {
                                 "data", base64Image
                         )
                 ),
-                Map.of("text", "Identify damaged car parts in this image. List only the part names, one per line (e.g. Hood, Front Bumper, Fender). Use common English names.")
+                Map.of("text", GEMINI_PROMPT)
         );
         Map<String, Object> requestBody = Map.of(
                 "contents", List.of(Map.of("parts", parts))
         );
 
         return webClient.post()
-                .uri(geminiApiUrl + "?key=" + geminiApiKey)
+                .uri(buildGeminiUri())
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(requestBody)
                 .retrieve()
@@ -121,15 +135,14 @@ public class ClaimService {
     }
 
     private String callGeminiTextOnly(String photoUrl) {
+        String textPrompt = "Analyze this car damage. Return ONLY a comma-separated list of damaged parts found in this list: [Headlight, Bumper, Hood, Door, Fender]. If no damage, return 'None'. Image URL for context: " + photoUrl;
         Map<String, Object> requestBody = Map.of(
                 "contents", List.of(
-                        Map.of("parts", List.of(
-                                Map.of("text", "Based on this image URL, list possible damaged car parts (one per line): " + photoUrl + ". Use names like: Hood, Front Bumper, Fender, Door.")
-                        ))
+                        Map.of("parts", List.of(Map.of("text", textPrompt)))
                 )
         );
         return webClient.post()
-                .uri(geminiApiUrl + "?key=" + geminiApiKey)
+                .uri(buildGeminiUri())
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(requestBody)
                 .retrieve()
@@ -167,10 +180,14 @@ public class ClaimService {
             if (textNode.isMissingNode() || !textNode.isTextual()) {
                 return parts;
             }
-            String text = textNode.asText();
-            String[] lines = text.split("\\n");
-            for (String line : lines) {
-                String clean = line.replaceAll("[^a-zA-Z ]", "").trim();
+            String text = textNode.asText().trim();
+            if ("None".equalsIgnoreCase(text)) {
+                return parts;
+            }
+            // Support comma-separated list and newline-separated list
+            String[] tokens = text.split("[,\\n]");
+            for (String token : tokens) {
+                String clean = token.replaceAll("[^a-zA-Z ]", "").trim();
                 if (!clean.isEmpty()) {
                     parts.add(clean);
                 }
