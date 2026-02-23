@@ -31,8 +31,12 @@ public class ClaimController {
             return ResponseEntity.badRequest()
                     .body("username and photoUrl are required (query params or JSON body)");
         }
-        Claim c = claimService.createClaim(username, photoUrl);
-        return ResponseEntity.ok(c);
+        try {
+            Claim c = claimService.createClaim(username, photoUrl);
+            return ResponseEntity.ok(c);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
     }
 
     @GetMapping("/all")

@@ -36,12 +36,15 @@ public class ClaimService {
     @Value("${gemini.api.url}")
     private String geminiApiUrl;
 
-    private static final String GEMINI_PROMPT = "Analyze this car damage. Return ONLY a comma-separated list of damaged parts found in this list: [Headlight, Bumper, Hood, Door, Fender]. If no damage, return 'None'.";
+    /** Prompt: only parts from this list (matches pricing_db). */
+    private static final String GEMINI_PROMPT = "Analyze this car damage. Return ONLY the names of damaged parts from this exact list: [Headlight, Bumper, Hood, Door, Fender]. Comma-separated. If no damage, return 'None'.";
 
     public Claim createClaim(String username, String photoUrl) {
         String geminiResponseJson;
         try {
             geminiResponseJson = callGemini(photoUrl);
+        } catch (IllegalArgumentException e) {
+            throw e; // e.g. "Invalid Image URL" -> controller returns 400
         } catch (Exception e) {
             log.warn("Gemini call failed for photoUrl={}: {}", photoUrl, e.getMessage());
             geminiResponseJson = "{\"error\": \"Gemini call failed: " + e.getMessage().replace("\"", "'") + "\"}";
@@ -84,7 +87,7 @@ public class ClaimService {
     }
 
     private String callGemini(String photoUrl) {
-        byte[] imageBytes = null;
+        byte[] imageBytes;
         try {
             imageBytes = webClient.get()
                     .uri(photoUrl)
@@ -97,10 +100,11 @@ public class ClaimService {
                     .bodyToMono(byte[].class)
                     .block();
         } catch (Exception e) {
-            log.warn("Failed to fetch image from URL, falling back to text-only prompt: {}", e.getMessage());
+            log.warn("Image fetch failed for URL: {} - {}", photoUrl, e.getMessage());
+            throw new IllegalArgumentException("Invalid Image URL");
         }
         if (imageBytes == null || imageBytes.length == 0) {
-            return callGeminiTextOnly(photoUrl);
+            throw new IllegalArgumentException("Invalid Image URL");
         }
 
         String base64Image = Base64.getEncoder().encodeToString(imageBytes);
@@ -128,21 +132,6 @@ public class ClaimService {
                 .block();
     }
 
-    private String callGeminiTextOnly(String photoUrl) {
-        String textPrompt = GEMINI_PROMPT + " Image URL for context: " + photoUrl;
-        Map<String, Object> requestBody = Map.of(
-                "contents", List.of(
-                        Map.of("parts", List.of(Map.of("text", textPrompt)))
-                )
-        );
-        return webClient.post()
-                .uri(buildGeminiUri())
-                .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(requestBody)
-                .retrieve()
-                .bodyToMono(String.class)
-                .block();
-    }
 
     private static String inferMimeType(String url) {
         if (url == null) return "image/jpeg";
