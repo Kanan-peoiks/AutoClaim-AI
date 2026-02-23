@@ -36,8 +36,9 @@ public class ClaimService {
     @Value("${gemini.api.url}")
     private String geminiApiUrl;
 
+    private static final String GEMINI_PROMPT = "Analyze this car damage. Return ONLY a comma-separated list of damaged parts found in this list: [Headlight, Bumper, Hood, Door, Fender]. If no damage, return 'None'.";
+
     public Claim createClaim(String username, String photoUrl) {
-        // 1. Gemini API-ni çağırırıq
         String geminiResponseJson;
         try {
             geminiResponseJson = callGemini(photoUrl);
@@ -46,29 +47,24 @@ public class ClaimService {
             geminiResponseJson = "{\"error\": \"Gemini call failed: " + e.getMessage().replace("\"", "'") + "\"}";
         }
 
-        // 2. Gemini-dən gələn mətndən zədəli detalları ayırırıq
         List<String> damagedParts = extractDamagedParts(geminiResponseJson);
 
-        // 3. Hər detal üçün Pricing-service-dən qiymət soruşuruq
         double totalCost = 0.0;
         for (String part : damagedParts) {
             try {
-                // FeignClient vasitəsilə digər servisə müraciət
                 double price = pricingClient.getPrice(part);
                 totalCost += price;
             } catch (Exception ex) {
-                // Əgər qiymət tapılmasa (404 və s.), 0 qəbul edib davam edirik
-                System.out.println("Price not found for part: " + part);
+                log.debug("Price not found for part: {}", part);
             }
         }
 
-        // 4. Məlumatları PostgreSQL-ə yazırıq
         Claim claim = Claim.builder()
                 .username(username)
                 .photoUrl(photoUrl)
                 .damagedParts(damagedParts)
                 .totalCost(totalCost)
-                .jsonData(geminiResponseJson) // Gələcəkdə analiz üçün tam JSON-u saxlayırıq
+                .jsonData(geminiResponseJson)
                 .createdAt(LocalDateTime.now())
                 .build();
 
@@ -79,6 +75,7 @@ public class ClaimService {
         return repo.findAll();
     }
 
+    /** Build Gemini API URI safely: base URL + query param "key" (no double :generateContent). */
     private URI buildGeminiUri() {
         return UriComponentsBuilder.fromUriString(geminiApiUrl)
                 .queryParam("key", geminiApiKey)
@@ -86,10 +83,7 @@ public class ClaimService {
                 .toUri();
     }
 
-    private static final String GEMINI_PROMPT = "Analyze this car damage. Return ONLY a comma-separated list of damaged parts found in this list: [Headlight, Bumper, Hood, Door, Fender]. If no damage, return 'None'.";
-
     private String callGemini(String photoUrl) {
-        // 1. Fetch image from URL (follow redirects; 404/5xx fall back to text-only)
         byte[] imageBytes = null;
         try {
             imageBytes = webClient.get()
@@ -108,10 +102,10 @@ public class ClaimService {
         if (imageBytes == null || imageBytes.length == 0) {
             return callGeminiTextOnly(photoUrl);
         }
+
         String base64Image = Base64.getEncoder().encodeToString(imageBytes);
         String mimeType = inferMimeType(photoUrl);
 
-        // 2. Build request with inlineData (Gemini API format)
         List<Map<String, Object>> parts = List.of(
                 Map.of(
                         "inlineData", Map.of(
@@ -135,7 +129,7 @@ public class ClaimService {
     }
 
     private String callGeminiTextOnly(String photoUrl) {
-        String textPrompt = "Analyze this car damage. Return ONLY a comma-separated list of damaged parts found in this list: [Headlight, Bumper, Hood, Door, Fender]. If no damage, return 'None'. Image URL for context: " + photoUrl;
+        String textPrompt = GEMINI_PROMPT + " Image URL for context: " + photoUrl;
         Map<String, Object> requestBody = Map.of(
                 "contents", List.of(
                         Map.of("parts", List.of(Map.of("text", textPrompt)))
@@ -184,7 +178,6 @@ public class ClaimService {
             if ("None".equalsIgnoreCase(text)) {
                 return parts;
             }
-            // Support comma-separated list and newline-separated list
             String[] tokens = text.split("[,\\n]");
             for (String token : tokens) {
                 String clean = token.replaceAll("[^a-zA-Z ]", "").trim();
